@@ -1,0 +1,202 @@
+---
+title: "Seedling_processing"
+output: html_document
+---
+```{r}
+library(terra)
+library(tigris)
+library(sf)
+library(amadeus)
+library(rFIA)
+library(dplyr)
+library(ggplot2)
+library(ranger)
+library(purrr)
+set.seed(123)
+```
+
+```{r}
+or_fia <- readFIA("C:/Users/dinardo/OneDrive - University Of Oregon/ESA Abstract/AZ_CSV", nCores = 4)
+or_fia_clip <- clipFIA(or_fia, mostRecent = TRUE) #This gets the most recent data which helps save a lot of space since FIA data goes back to 1999 in Oregon
+rm(or_fia)
+az_fia_clip<-or_fia_clip
+rm(or_fia_clip)
+```
+
+```{r}
+#Processing function
+process_seedlings <- function(year, spcd, save_path = NULL) {
+ #Get seedling records from SEEDLING table 
+  Seedling_df <- az_fia_clip$SEEDLING %>%
+    filter(SPCD == spcd,
+           INVYR == year,
+           !is.na(TREECOUNT_CALC)) %>%
+    select(PLT_CN, SUBP, CONDID, INVYR, SPCD, TPA_UNADJ)
+  
+  #Calculate plot-level TPA (sum of TPA_UNADJ across subplots)
+  Seedling_tpa <- Seedling_df %>%
+    group_by(PLT_CN) %>%
+    summarise(TPA = sum(TPA_UNADJ, na.rm = TRUE), .groups = "drop")
+  
+  # Get plot coordinates and elevation from the PLOT table
+  lat_long_df <- az_fia_clip$PLOT %>%
+    filter(INVYR == year) %>%
+    select(PLT_CN, LAT, LON, ELEV) %>%
+    filter(!is.na(LAT), !is.na(LON), !is.na(ELEV))
+  
+  # 4. Get ownership info from the COND table 
+  owner_df <- az_fia_clip$COND %>%
+    filter(INVYR == year) %>%
+    select(PLT_CN, OWNCD, OWNGRPCD) #Straight landowner and landowner group
+  # Letf join everything
+  joined_df <- Seedling_tpa %>%
+    left_join(lat_long_df, by = "PLT_CN") %>%
+    filter(!is.na(TPA), TPA > 0) %>%
+    left_join(owner_df, by = "PLT_CN")
+  
+  # Convert to spacial feature 
+  seedling_sf <- st_as_sf(joined_df, coords = c("LON", "LAT"), crs = 4326) #crs matches climate data
+  
+  # Save to file
+  if (!is.null(save_path)) {
+    st_write(seedling_sf, save_path, delete_dsn = TRUE)
+  }
+  
+  return(seedling_sf)}
+
+```
+Running the function to get years 2010 to 2022 fron ponderisa pine
+```{r}
+years<-2010:2022
+spcd<-122 #ponderosa pine
+
+for(i in years){
+  file_saved<- file.path("C:/Users/dinardo/LANDIS/ESA_Southwest_data/AZ_Seedling_Desnity/Ponderosa_Seedling_TPA_sf", paste0("Ponderosa_pine",i,".gpkg"))
+  process_seedlings(year = i, spcd = spcd, save_path = file_saved)
+}
+```
+visulae base data
+```{r}
+# Process each year
+seelding_2022<-process_seedlings(2022, 122)
+seelding_2021<-process_seedlings(2021, 122)
+seelding_2020<-process_seedlings(2020, 122)
+seelding_2019<-process_seedlings(2019, 122)
+seelding_2018<-process_seedlings(2018, 122)
+seelding_2017<-process_seedlings(2017, 122)
+seelding_2016<-process_seedlings(2016, 122)
+seelding_2015<-process_seedlings(2015, 122)
+seelding_2014<-process_seedlings(2014, 122)
+seelding_2013<-process_seedlings(2013, 122)
+seelding_2012<-process_seedlings(2012, 122)
+seelding_2011<-process_seedlings(2011, 122)
+seelding_2010<-process_seedlings(2010, 122)
+# Add year column to each dataset
+seelding_2014 <- seelding_2014 %>% mutate(year = 2010)
+seelding_2014 <- seelding_2014 %>% mutate(year = 2011)
+seelding_2014 <- seelding_2014 %>% mutate(year = 2012)
+seelding_2014 <- seelding_2014 %>% mutate(year = 2013)
+seelding_2014 <- seelding_2014 %>% mutate(year = 2014)
+seelding_2015 <- seelding_2015 %>% mutate(year = 2015)
+seelding_2016 <- seelding_2016 %>% mutate(year = 2016)
+seelding_2017 <- seelding_2017 %>% mutate(year = 2017)
+seelding_2018 <- seelding_2018 %>% mutate(year = 2018)
+seelding_2019 <- seelding_2019 %>% mutate(year = 2019)
+seelding_2020 <- seelding_2020 %>% mutate(year = 2020)
+seelding_2021 <- seelding_2021 %>% mutate(year = 2021)
+seelding_2022 <- seelding_2022 %>% mutate(year = 2022)
+
+# Bind them all together
+seedlings_all <- bind_rows(
+seelding_2010, seelding_2011, seelding_2012, seelding_2013, seelding_2014, seelding_2015, seelding_2016, seelding_2017,
+  seelding_2018, seelding_2019, seelding_2020, seelding_2021, seelding_2022
+)
+```
+
+```{r}
+ggplot(seelding_2022, aes(x = TPA)) +
+  geom_histogram(binwidth = 100, fill = "forestgreen", color = "white") +
+  labs(
+    title = "Histogram of Douglas-fir Seedling Density (TPA)",
+    x = "Trees per Acre (TPA)",
+    y = "Number of Plots"
+  )
+```
+```{r}
+avg_tpa<-seedlings_all %>% 
+  group_by(year) %>% 
+  summarise(mean=mean(TPA), median = median(TPA), max = max(TPA))
+avg_tpa
+
+ggplot(seedlings_all, aes(x = factor(year), y = log10(TPA))) +
+  geom_boxplot(fill = "forestgreen", alpha = 1, outlier.color = "gray40") +
+  labs(
+    title = "Annual Seedling Density",
+    x = NULL,
+    y = "Log10 Trees per Acre (TPA)"
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(
+    plot.title   = element_text(face = "bold", size = 16, hjust = 0.5),
+    axis.text.x  = element_text(size = 12, angle = 45, hjust = 1),   # tick labels on x-axis
+    axis.text.y  = element_text(size = 12),                          # tick labels on y-axis
+    axis.title.x = element_text(size = 14, face = "bold"),           # x-axis title
+    axis.title.y = element_text(size = 14, face = "bold", margin = margin(r = 15)) # y-axis title
+  )
+```
+ Combing climate and seedling data
+```{r}
+SeedlingClimate_extract <- function(year, species_name){
+  # Build file path from year + species name to get location of seedling data 
+  gpkg_file <- file.path(
+  "C:/Users/dinardo/LANDIS/ESA_Southwest_data/AZ_Seedling_Desnity/Ponderosa_Seedling_TPA_sf",
+  paste0(species_name, year, ".gpkg")
+)
+#Read in the seedling sf
+seedling_file <- st_read(gpkg_file, quiet = TRUE)
+
+#Read in rasters and build climate raster stack
+tmmn_file<-paste0("C:/Users/dinardo/LANDIS/ESA_Southwest_data/AZ_Seedling_Desnity/tmmn/tmmn_", year, ".tif")
+tmmx_file<-paste0("C:/Users/dinardo/LANDIS/ESA_Southwest_data/AZ_Seedling_Desnity/tmmx/tmmx_", year, ".tif")
+tmean_file<-paste0("C:/Users/dinardo/LANDIS/ESA_Southwest_data/AZ_Seedling_Desnity/tmean/tmean_", year, ".tif")
+pr_file<-paste0("C:/Users/dinardo/LANDIS/ESA_Southwest_data/AZ_Seedling_Desnity/pr/pr_", year, ".tif")
+
+#Read the rasts
+tmmn_rast<-rast(tmmn_file)
+tmmx_rast<-rast(tmmx_file)
+tmean_rast<-rast(tmean_file)
+pr_rast<-rast(pr_file)
+
+climate_stack<-(c(tmmn_rast, tmmx_rast, tmean_rast, pr_rast)) #stack them
+names(climate_stack)<-c("tmmn","tmmx","tmean","pr") #name them
+
+#Extract climate values 
+ clim_vals <- terra::extract(climate_stack, seedling_file)
+ 
+#Bind climate values back to seedling data and drop ID column
+  combined_sf <- cbind(seedling_file, clim_vals[,-1])
+#Ownership codes to factors, this is because each number in the data is a categorical unit
+  combined_sf$OWNCD    <- as.factor(combined_sf$OWNCD)
+  combined_sf$OWNGRPCD <- as.factor(combined_sf$OWNGRPCD) 
+  
+#Save output
+out_dir<-file.path("C:/Users/dinardo/LANDIS/ESA_Southwest_data/AZ_Seedling_Desnity/Extracted_seedling_Climate",
+  )
+  out_file <- file.path(out_dir, paste0(species_name, "_", year, ".gpkg"))
+  
+st_write(combined_sf, out_file, delete_dsn = TRUE, quiet = TRUE)
+
+ return(combined_sf)
+}
+
+```
+Loop through
+```{r}
+year<-2010:2022
+
+for(i in year){
+  SeedlingClimate_extract(i, "Ponderosa_pine")
+}
+```
+
+ 
